@@ -3,12 +3,14 @@ import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import { useCursor, useTexture } from '@react-three/drei'
 import { easing } from 'maath'
+import { keepGoing, step } from './frame'
 import { marble } from './textures'
 import { GOLD } from './theme'
 import { Plaque } from './Exhibit'
+import { asset } from '../asset'
 
 function Face({ src }) {
-  const tex = useTexture(src)
+  const tex = useTexture(asset(src))
   return (
     <mesh position={[0, 2.02, 0.19]}>
       <planeGeometry args={[0.42, 0.52]} />
@@ -35,9 +37,7 @@ export function Sculpture({ exhibit, position, active, onSelect }) {
   const halo = useRef()
   useCursor(hovered)
 
-  useFrame((_, dt) => {
-    easing.damp(halo.current, 'opacity', hovered || active ? 0.5 : 0.25, 0.25, dt)
-  })
+  useFrame((state, dt) => keepGoing(state, easing.damp(halo.current, 'opacity', hovered || active ? 0.5 : 0.25, 0.25, step(dt))))
 
   const stone = <meshStandardMaterial map={map} color="#f4f0e8" roughness={0.28} metalness={0} />
 

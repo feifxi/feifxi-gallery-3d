@@ -33,7 +33,7 @@ function finish(canvas) {
 }
 
 /** A quiet abstract "painting" for exhibits without an image yet. */
-export function paintPlaceholder(exhibit, [w, h]) {
+export function paintPlaceholder(exhibit, [w, h], caption = 'YOUR IMAGE HERE') {
   const H = 1024
   const W = Math.round(H * (w / h))
   const c = document.createElement('canvas')
@@ -85,7 +85,7 @@ export function paintPlaceholder(exhibit, [w, h]) {
   wrap(g, exhibit.title, W / 2, H * 0.74, W * 0.78, H * 0.07)
   g.globalAlpha = 0.55
   g.font = `500 ${Math.round(H * 0.022)}px Inter, sans-serif`
-  g.fillText('— YOUR IMAGE HERE —'.split('').join(String.fromCharCode(8202)), W / 2, H * 0.9)
+  g.fillText(`— ${caption} —`.split('').join(String.fromCharCode(8202)), W / 2, H * 0.9)
 
   return finish(c)
 }
@@ -184,4 +184,128 @@ export function floorTiles() {
   const t = finish(c)
   t.wrapS = t.wrapT = THREE.RepeatWrapping
   return t
+}
+
+/** A parchment certificate for credentials without a scan yet. */
+export function paintCertificate(exhibit, [w, h]) {
+  const H = 1024
+  const W = Math.round(H * (w / h))
+  const c = document.createElement('canvas')
+  c.width = W
+  c.height = H
+  const g = c.getContext('2d')
+  const r = rng(hash(exhibit.id))
+  const GOLD = '#a8823c'
+  const INK = '#2b211b'
+
+  // aged paper
+  const bg = g.createRadialGradient(W / 2, H / 2, H * 0.2, W / 2, H / 2, W * 0.75)
+  bg.addColorStop(0, '#f6eedb')
+  bg.addColorStop(1, '#e2d1ad')
+  g.fillStyle = bg
+  g.fillRect(0, 0, W, H)
+  g.globalAlpha = 0.05
+  for (let i = 0; i < 7000; i++) {
+    g.fillStyle = r() > 0.5 ? '#fff' : '#6b4a20'
+    g.fillRect(r() * W, r() * H, 2, 2)
+  }
+  g.globalAlpha = 1
+
+  // double gilt border with corner flourishes
+  g.strokeStyle = GOLD
+  g.lineWidth = 10
+  g.strokeRect(H * 0.045, H * 0.045, W - H * 0.09, H - H * 0.09)
+  g.lineWidth = 2.5
+  g.strokeRect(H * 0.075, H * 0.075, W - H * 0.15, H - H * 0.15)
+  for (const [x, y] of [[H * 0.075, H * 0.075], [W - H * 0.075, H * 0.075], [H * 0.075, H - H * 0.075], [W - H * 0.075, H - H * 0.075]]) {
+    g.fillStyle = GOLD
+    g.beginPath()
+    g.arc(x, y, H * 0.016, 0, Math.PI * 2)
+    g.fill()
+  }
+
+  const serif = (style, px) => `${style} ${Math.round(px)}px "Cormorant Garamond", Georgia, serif`
+  const spaced = (t) => t.split('').join(String.fromCharCode(8202))
+  g.textAlign = 'center'
+  g.fillStyle = GOLD
+  g.font = `600 ${Math.round(H * 0.026)}px Inter, sans-serif`
+  g.fillText(spaced('CERTIFICATE OF ACHIEVEMENT'), W / 2, H * 0.19)
+
+  g.fillStyle = '#5b4a3a'
+  g.font = serif('italic 500', H * 0.04)
+  g.fillText('This is to certify that the bearer has, against all odds, earned', W / 2, H * 0.3, W * 0.8)
+
+  g.fillStyle = INK
+  g.font = serif('600', H * 0.085)
+  wrap(g, exhibit.title, W / 2, H * 0.43, W * 0.78, H * 0.09)
+
+  // flourish rule
+  g.strokeStyle = GOLD
+  g.lineWidth = 2
+  g.beginPath()
+  g.moveTo(W * 0.3, H * 0.535)
+  g.lineTo(W * 0.7, H * 0.535)
+  g.stroke()
+
+  g.fillStyle = '#5b4a3a'
+  g.font = serif('italic 500', H * 0.045)
+  g.fillText(exhibit.score ? `with ${exhibit.score}` : `issued by ${exhibit.org ?? ''}`, W / 2, H * 0.61, W * 0.8)
+
+  // signature lines
+  g.font = `500 ${Math.round(H * 0.02)}px Inter, sans-serif`
+  g.fillStyle = '#7a6a58'
+  ;[
+    [W * 0.27, exhibit.org ?? ''],
+    [W * 0.73, String(exhibit.year ?? '').split(' · ')[0]],
+  ].forEach(([x, label]) => {
+    g.strokeStyle = '#7a6a58'
+    g.lineWidth = 1.5
+    g.beginPath()
+    g.moveTo(x - W * 0.15, H * 0.8)
+    g.lineTo(x + W * 0.15, H * 0.8)
+    g.stroke()
+    g.fillText(spaced(String(label).toUpperCase()), x, H * 0.84, W * 0.3)
+  })
+  g.font = serif('italic 500', H * 0.05)
+  g.fillStyle = '#3a4a6a'
+  g.fillText('Suchai C.', W * 0.27, H * 0.78)
+
+  // wax seal with ribbon tails
+  const sx = W / 2
+  const sy = H * 0.745
+  const sr = H * 0.068
+  g.fillStyle = '#7e1f24'
+  for (const d of [-1, 1]) {
+    g.beginPath()
+    g.moveTo(sx + d * sr * 0.2, sy)
+    g.lineTo(sx + d * sr * 0.9, sy + sr * 1.7)
+    g.lineTo(sx + d * sr * 0.45, sy + sr * 1.45)
+    g.lineTo(sx + d * sr * 0.1, sy + sr * 1.75)
+    g.closePath()
+    g.fill()
+  }
+  g.beginPath()
+  for (let i = 0; i <= 24; i++) {
+    const a = (i / 24) * Math.PI * 2
+    const rr = sr * (i % 2 ? 0.9 : 1)
+    g.lineTo(sx + Math.cos(a) * rr, sy + Math.sin(a) * rr)
+  }
+  g.fillStyle = '#a3282f'
+  g.fill()
+  g.strokeStyle = '#d9a35b'
+  g.lineWidth = 2
+  g.beginPath()
+  g.arc(sx, sy, sr * 0.65, 0, Math.PI * 2)
+  g.stroke()
+  g.fillStyle = '#f1d9a8'
+  g.font = serif('600', sr * 0.8)
+  g.textBaseline = 'middle'
+  g.fillText('✦', sx, sy)
+  g.textBaseline = 'alphabetic'
+
+  g.fillStyle = '#9a8a74'
+  g.font = `500 ${Math.round(H * 0.017)}px Inter, sans-serif`
+  g.fillText(spaced('— YOUR CERTIFICATE SCAN HERE —'), W / 2, H * 0.905)
+
+  return finish(c)
 }

@@ -1,13 +1,46 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useProgress } from '@react-three/drei'
-import { centerpiece, finale, owner, sections } from './data'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import * as collection from './data'
 import { buildLayout } from './scene/layout'
-import { Experience } from './scene/Experience'
+import { asset } from './asset'
+// three.js is most of the download: fetch it while the intro is already on screen
+const loadScene = () => import('./scene/Experience')
+loadScene()
+const Experience = lazy(() => loadScene().then((m) => ({ default: m.Experience })))
 
+const { owner } = collection
 const pad = (n) => String(n).padStart(2, '0')
 
-function Intro({ ready, onEnter }) {
-  const { progress } = useProgress()
+/** Every picture the hall will hang (the first slide decides a project frame's shape). */
+const imagePaths = () =>
+  [
+    ...collection.education.entries.map((e) => e.image),
+    ...collection.certificates.items.map((c) => c.image),
+    ...collection.experience.entries.map((e) => e.image),
+    ...collection.projects.items.map((p) => p.images?.[0]),
+    collection.masterpiece.image,
+  ].filter(Boolean)
+
+/** Measures images (width / height) so every frame is cut to fit its picture. A missing image just gets the default shape. */
+function useImageAspects() {
+  const [aspects, setAspects] = useState(null)
+  useEffect(() => {
+    const paths = [...new Set(imagePaths())]
+    Promise.all(
+      paths.map(
+        (src) =>
+          new Promise((done) => {
+            const img = new Image()
+            img.onload = () => done([src, img.naturalWidth / img.naturalHeight])
+            img.onerror = () => done([src, undefined])
+            img.src = asset(src)
+          }),
+      ),
+    ).then((pairs) => setAspects(Object.fromEntries(pairs.filter(([, a]) => a))))
+  }, [])
+  return aspects
+}
+
+function Intro({ ready, progress, onEnter }) {
   return (
     <div className="intro">
       <div className="intro__frame">
@@ -26,56 +59,211 @@ function Intro({ ready, onEnter }) {
   )
 }
 
-function Label({ stop, index, total, onClose }) {
-  const { exhibit, section } = stop
+/* ── the info panel ─────────────────────────────────────────
+ * The hall is the luxury; the panel is the tool: dark glass, plain type,
+ * a sticky header and footer, and it folds down to a title bar when you just want to look.
+ */
+
+const Icon = {
+  prev: <path d="M10 3 5 8l5 5" />,
+  next: <path d="m6 3 5 5-5 5" />,
+  fold: <path d="m4 6 4 4 4-4" />,
+  unfold: <path d="m4 10 4-4 4 4" />,
+  close: <path d="m4 4 8 8M12 4l-8 8" />,
+  out: <path d="M6 4h6v6M12 4 5 11" />,
+}
+const Svg = ({ d }) => (
+  <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    {d}
+  </svg>
+)
+
+/** 'mailto:a@b.com' → 'a@b.com', 'https://www.github.com/x' → 'github.com/x' */
+const pretty = (href) => href.replace(/^mailto:/, '').replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')
+
+function Panel({ kicker, count, title, sub, folded, setFolded, onClose, footer, className = '', children }) {
   return (
-    <aside className="label" key={exhibit.id}>
-      <button className="label__close" onClick={onClose} aria-label="Step back">
-        ×
-      </button>
-      <p className="eyebrow">
-        {section.numeral && `${section.numeral} · `}
-        {section.title}
-        <span className="label__no">No. {pad(index + 1)} / {pad(total)}</span>
-      </p>
-      <h2 className="label__title">{exhibit.title}</h2>
-      <p className="label__meta">
-        {owner.name}, {exhibit.year}
-      </p>
-      <p className="label__medium">{exhibit.medium}</p>
-      <div className="rule rule--left" />
-      <p className="label__desc">{exhibit.description}</p>
-      {exhibit.tags?.length > 0 && (
-        <ul className="tags">
-          {exhibit.tags.map((t) => (
-            <li key={t}>{t}</li>
-          ))}
-        </ul>
-      )}
-      {exhibit.links?.length > 0 && (
-        <div className="links">
-          {exhibit.links.map((l) => (
-            <a key={l.href} href={l.href} target="_blank" rel="noreferrer">
-              {l.label} <span aria-hidden>↗</span>
-            </a>
-          ))}
+    <aside className={`panel ${folded ? 'is-folded' : ''} ${className}`} aria-label={title}>
+      <header className="panel__head">
+        <div className="panel__bar">
+          <span className="panel__kicker">{kicker}</span>
+          {count && <span className="panel__count">{count}</span>}
+          <button className="panel__tool" onClick={() => setFolded((f) => !f)} aria-expanded={!folded} aria-label={folded ? 'Show details' : 'Hide details'}>
+            <Svg d={folded ? Icon.unfold : Icon.fold} />
+          </button>
+          <button className="panel__tool" onClick={onClose} aria-label="Step back">
+            <Svg d={Icon.close} />
+          </button>
         </div>
+        <h2 className="panel__title" onClick={() => folded && setFolded(false)}>
+          {title}
+        </h2>
+        {sub && !folded && <p className="panel__sub">{sub}</p>}
+      </header>
+      {!folded && (
+        <>
+          <div className="panel__body">{children}</div>
+          {footer && <footer className="panel__foot">{footer}</footer>}
+        </>
       )}
     </aside>
   )
 }
 
-function Catalogue({ stops, onPick, onClose }) {
+function Slides({ count, slide, setSlide }) {
+  if (count < 2) return null
+  return (
+    <div className="slides" role="group" aria-label="Screenshots">
+      <button onClick={() => setSlide((s) => (s - 1 + count) % count)} aria-label="Previous image">
+        <Svg d={Icon.prev} />
+      </button>
+      <div className="slides__dots">
+        {Array.from({ length: count }, (_, i) => (
+          <button key={i} className={i === slide ? 'is-on' : ''} onClick={() => setSlide(i)} aria-label={`Image ${i + 1}`} />
+        ))}
+      </div>
+      <span className="slides__count">
+        {String(slide + 1).padStart(2, '0')} / {String(count).padStart(2, '0')}
+      </span>
+      <button onClick={() => setSlide((s) => (s + 1) % count)} aria-label="Next image">
+        <Svg d={Icon.next} />
+      </button>
+    </div>
+  )
+}
+
+function Links({ links }) {
+  if (!links?.length) return null
+  return links.map((l, i) => (
+    <a key={l.href} className={`link-btn ${i === 0 ? 'link-btn--primary' : ''}`} href={l.href} target="_blank" rel="noreferrer">
+      {l.label} <Svg d={Icon.out} />
+    </a>
+  ))
+}
+
+const Chips = ({ items }) =>
+  items?.length > 0 && (
+    <ul className="chips">
+      {items.map((t) => (
+        <li key={t}>{t}</li>
+      ))}
+    </ul>
+  )
+
+const TABS = ['About', 'Skills', 'Contact']
+
+/** The statue's panel: who you are, what you work with, how to reach you — one tab at a time. */
+function AboutLabel({ exhibit, folded, setFolded, onClose }) {
+  const [tab, setTab] = useState('About')
+  return (
+    <Panel
+      className="panel--about"
+      kicker="The Rotunda · About"
+      title={owner.name}
+      sub={exhibit.role}
+      folded={folded}
+      setFolded={setFolded}
+      onClose={onClose}
+      footer={<Links links={exhibit.links} />}
+    >
+      <div className="segmented" role="tablist">
+        {TABS.map((t) => (
+          <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'is-active' : ''} onClick={() => setTab(t)}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      <div className="tabpanel" key={tab} role="tabpanel">
+        {tab === 'About' && (
+          <>
+            <p className="panel__quote">{exhibit.artwork}</p>
+            <dl className="facts">
+              <div>
+                <dt>Based in</dt>
+                <dd>{exhibit.location}</dd>
+              </div>
+            </dl>
+            <p className="panel__desc">{exhibit.profile}</p>
+            {exhibit.credit && <p className="panel__credit">{exhibit.credit}</p>}
+          </>
+        )}
+
+        {tab === 'Skills' && (
+          <dl className="skills">
+            {exhibit.skills.map((g) => (
+              <div key={g.group}>
+                <dt>{g.group}</dt>
+                <dd>
+                  <Chips items={g.items} />
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+
+        {tab === 'Contact' && (
+          <ul className="contact">
+            {exhibit.links.map((l) => (
+              <li key={l.href}>
+                <a href={l.href} target="_blank" rel="noreferrer">
+                  <span>{l.label}</span>
+                  <code>{pretty(l.href)}</code>
+                  <Svg d={Icon.out} />
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Panel>
+  )
+}
+
+function Label({ stop, number, total, slide, setSlide, folded, setFolded, onClose }) {
+  const { exhibit, section } = stop
+  if (stop.kind === 'sculpture') return <AboutLabel exhibit={exhibit} folded={folded} setFolded={setFolded} onClose={onClose} />
+  return (
+    <Panel
+      key={exhibit.id}
+      kicker={`${section.numeral ? `${section.numeral} · ` : ''}${section.title}`}
+      count={number > 0 ? `${pad(number)}/${pad(total)}` : null}
+      title={exhibit.title}
+      sub={exhibit.by ?? owner.name}
+      folded={folded}
+      setFolded={setFolded}
+      onClose={onClose}
+      footer={exhibit.links?.length ? <Links links={exhibit.links} /> : null}
+    >
+      {exhibit.year && <p className="panel__when">{exhibit.year}</p>}
+      <Slides count={stop.slides?.length ?? 0} slide={slide} setSlide={setSlide} />
+      {exhibit.description && <p className="panel__desc">{exhibit.description}</p>}
+      {exhibit.details?.length > 0 && (
+        <ul className="details">
+          {exhibit.details.map((d) => (
+            <li key={d}>{d}</li>
+          ))}
+        </ul>
+      )}
+      <Chips items={exhibit.tags} />
+      {exhibit.medium && <p className="panel__quote">“{exhibit.medium}”</p>}
+      {exhibit.credit && <p className="panel__credit">{exhibit.credit}</p>}
+    </Panel>
+  )
+}
+
+function Catalogue({ stops, tour, onPick, onClose }) {
   const groups = []
   stops.forEach((s, i) => {
+    const zone = s.zone ?? s.section
     const last = groups[groups.length - 1]
-    if (last && last.section === s.section) last.items.push([s, i])
-    else groups.push({ section: s.section, items: [[s, i]] })
+    if (last && last.section === zone) last.items.push([s, i])
+    else groups.push({ section: zone, items: [[s, i]] })
   })
   return (
     <div className="catalogue" onClick={onClose}>
       <div className="catalogue__inner" onClick={(e) => e.stopPropagation()}>
-        <button className="label__close" onClick={onClose} aria-label="Close catalogue">
+        <button className="catalogue__close" onClick={onClose} aria-label="Close catalogue">
           ×
         </button>
         <p className="eyebrow">Catalogue of the collection</p>
@@ -90,7 +278,7 @@ function Catalogue({ stops, onPick, onClose }) {
               {g.items.map(([s, i]) => (
                 <li key={s.exhibit.id}>
                   <button onClick={() => onPick(i)}>
-                    <span className="catalogue__no">{pad(i + 1)}</span>
+                    <span className="catalogue__no">{tour.includes(i) ? pad(tour.indexOf(i) + 1) : '·'}</span>
                     <span className="catalogue__name">{s.exhibit.title}</span>
                     <span className="catalogue__dots" />
                     <span className="catalogue__year">{s.exhibit.year}</span>
@@ -106,8 +294,11 @@ function Catalogue({ stops, onPick, onClose }) {
 }
 
 export default function App() {
-  const layout = useMemo(() => buildLayout({ sections, centerpiece, finale }), [])
+  const aspects = useImageAspects()
+  // the layout never depends on the images loading (ids and order are the same either way)
+  const layout = useMemo(() => buildLayout(collection, aspects ?? {}), [aspects])
   const { stops } = layout
+  const tour = useMemo(() => stops.flatMap((s, i) => (s.tour ? [i] : [])), [stops])
   // deep links: /#project-1 opens that work, /#hall skips the intro
   const initial = useMemo(() => {
     const id = decodeURIComponent(window.location.hash.slice(1))
@@ -117,8 +308,12 @@ export default function App() {
   const [entered, setEntered] = useState(initial !== null)
   const [active, setActive] = useState(initial ?? -1)
   const [catalogue, setCatalogue] = useState(false)
+  const [slide, setSlide] = useState(0)
   const [fontsReady, setFontsReady] = useState(false)
   const [sceneReady, setSceneReady] = useState(false)
+  const [progress, setProgress] = useState(0)
+  // the panel can fold down to its title bar; the choice sticks as you stroll
+  const [folded, setFolded] = useState(false)
 
   useEffect(() => {
     // painted placeholders use the web fonts, so wait for them
@@ -128,10 +323,25 @@ export default function App() {
     ]).finally(() => setFontsReady(true))
   }, [])
 
+  // the tour visits every stop except individual salon frames
   const go = useCallback(
-    (dir) => setActive((a) => (a < 0 ? (dir > 0 ? 0 : stops.length - 1) : (a + dir + stops.length) % stops.length)),
-    [stops.length],
+    (dir) =>
+      setActive((a) => {
+        if (a < 0) return dir > 0 ? tour[0] : tour[tour.length - 1]
+        if (dir > 0) return tour.find((i) => i > a) ?? tour[0]
+        return tour.findLast((i) => i < a) ?? tour[tour.length - 1]
+      }),
+    [tour],
   )
+
+  // project slides: start from the first, then advance gently on their own
+  const slideCount = active >= 0 ? (stops[active].slides?.length ?? 0) : 0
+  useEffect(() => setSlide(0), [active])
+  useEffect(() => {
+    if (slideCount < 2) return
+    const t = setInterval(() => setSlide((s) => (s + 1) % slideCount), 5000)
+    return () => clearInterval(t)
+  }, [slideCount, slide])
 
   useEffect(() => {
     if (!entered) return
@@ -154,11 +364,23 @@ export default function App() {
 
   return (
     <>
-      {fontsReady && <Experience layout={layout} active={entered ? active : -1} onSelect={(i) => entered && setActive(i)} onReady={() => setSceneReady(true)} />}
-      <div className="vignette" />
+      {fontsReady && aspects && (
+        <Suspense fallback={null}>
+          <Experience
+            layout={layout}
+            active={entered ? active : -1}
+            slide={slide}
+            onSelect={(i) => entered && setActive(i)}
+            onReady={() => setSceneReady(true)}
+            onProgress={setProgress}
+            panelOpen={!folded}
+          />
+        </Suspense>
+      )}
+      <div className={`vignette ${stop?.variant === 'canvas' ? 'vignette--light' : ''}`} />
       <div className="grain" />
 
-      {!entered && <Intro ready={sceneReady} onEnter={() => setEntered(true)} />}
+      {!entered && <Intro ready={sceneReady} progress={progress} onEnter={() => setEntered(true)} />}
 
       {entered && (
         <div className="hud">
@@ -188,7 +410,7 @@ export default function App() {
                   ←
                 </button>
                 <span className="tour__where">
-                  <em>No. {pad(active + 1)}</em> {stop.section.title}
+                  {stop.tour && <em>No. {pad(tour.indexOf(active) + 1)}</em>} {(stop.zone ?? stop.section).title}
                 </span>
                 <button className="tour__arrow" onClick={() => go(1)} aria-label="Next work">
                   →
@@ -196,7 +418,7 @@ export default function App() {
               </>
             ) : (
               <>
-                <button className="btn btn--solid" onClick={() => setActive(0)}>
+                <button className="btn btn--solid" onClick={() => setActive(tour[0])}>
                   Begin the tour
                 </button>
                 <span className="tour__hint">or click any work · ← → to stroll · Esc to step back</span>
@@ -204,13 +426,25 @@ export default function App() {
             )}
           </nav>
 
-          {stop && <Label stop={stop} index={active} total={stops.length} onClose={() => setActive(-1)} />}
+          {stop && (
+            <Label
+              stop={stop}
+              number={stop.tour ? tour.indexOf(active) + 1 : 0}
+              total={tour.length}
+              slide={slide}
+              setSlide={setSlide}
+              folded={folded}
+              setFolded={setFolded}
+              onClose={() => setActive(-1)}
+            />
+          )}
         </div>
       )}
 
       {catalogue && (
         <Catalogue
           stops={stops}
+          tour={tour}
           onClose={() => setCatalogue(false)}
           onPick={(i) => {
             setCatalogue(false)
